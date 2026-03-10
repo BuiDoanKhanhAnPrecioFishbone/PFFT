@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["ES2017", "DOM"],
+    "strict": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["@figma/plugin-typings"],
+    "skipLibCheck": true,
+    "noEmit": true,
+    "composite": true
+  },
+  "include": ["src/code.ts", "src/fonts.ts", "src/mapper.ts", "src/claude.ts", "src/tokens.ts"]
+}

@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Test UI</title>
+  <style>
+    body { margin: 0; padding: 20px; font-family: sans-serif; }
+    #status { color: green; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h2>Plugin UI Test</h2>
+  <p>If you see this, HTML loads.</p>
+  <div id="status">Waiting for JS...</div>
+  <script>
+    document.getElementById('status').textContent = 'JavaScript works!';
+    document.getElementById('status').style.color = 'blue';
+  </script>
+</body>
+</html>

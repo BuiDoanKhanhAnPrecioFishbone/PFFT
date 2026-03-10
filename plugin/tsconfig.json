@@ -1,0 +1,12 @@
+{
+  // Solution-level tsconfig: VS Code uses this to map each source file
+  // to the correct sub-project (and its types).
+  //
+  // tsconfig.code.json  →  Figma plugin main thread  (figma.* globals, @figma/plugin-typings)
+  // tsconfig.ui.json    →  React UI (Vite-bundled)   (DOM, React JSX)
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.code.json" },
+    { "path": "./tsconfig.ui.json" }
+  ]
+}
