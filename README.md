@@ -79,8 +79,8 @@ The key is saved locally in Figma's storage — it is never sent anywhere except
 ### Option B — Build from source
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/code-to-figma.git
-cd code-to-figma/plugin
+git clone https://github.com/BuiDoanKhanhAnPrecioFishbone/PFFT.git
+cd PFFT/plugin
 npm install
 npm run build        # produces code.js and ui.html
 ```
