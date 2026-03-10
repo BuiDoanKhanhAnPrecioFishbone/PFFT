@@ -126,21 +126,43 @@ textNode.textStyleId = ts.id;   // apply BEFORE setting characters
 ## ComponentSet (Variants)
 Use this when the component has props with multiple values (variant, size, state, etc.).
 \`\`\`js
+// Helper — always define this when using hex colours for variants
+function hexToRgb(hex) {
+  const h = hex.replace('#', '');
+  return { r: parseInt(h.slice(0,2),16)/255, g: parseInt(h.slice(2,4),16)/255, b: parseInt(h.slice(4,6),16)/255 };
+}
+
 // 1. Create one figma.createComponent() per variant combination.
-//    Name each with the pattern:  Prop1=value1, Prop2=value2
+//    Name each with the EXACT pattern:  Prop1=value1, Prop2=value2
 const btnPrimary = figma.createComponent();
 btnPrimary.name = "variant=primary, size=md";
-// ... build child nodes inside btnPrimary ...
+// Apply variant-specific fill (DIFFERENT for each variant)
+btnPrimary.fills = [{ type: "SOLID", color: hexToRgb("#2563EB") }];
+btnPrimary.strokes = [];
+// Build child nodes inside btnPrimary ...
 
 const btnGhost = figma.createComponent();
 btnGhost.name = "variant=ghost, size=md";
+// Ghost = transparent background + border
+btnGhost.fills = [];  // transparent
+btnGhost.strokes = [{ type: "SOLID", color: hexToRgb("#2563EB") }];
+btnGhost.strokeWeight = 1;
+btnGhost.strokeAlign = "INSIDE";
+// Build child nodes inside btnGhost ...
+
+const btnOutline = figma.createComponent();
+btnOutline.name = "variant=outline, size=md";
+btnOutline.fills = [{ type: "SOLID", color: hexToRgb("#FFFFFF") }];
+btnOutline.strokes = [{ type: "SOLID", color: hexToRgb("#D1D5DB") }];
+btnOutline.strokeWeight = 1;
+btnOutline.strokeAlign = "INSIDE";
 // ...
 
 // 2. Combine into a ComponentSet — this appends to the page automatically.
-const set = figma.combineAsVariants([btnPrimary, btnGhost], figma.currentPage);
-set.name = "Button";   // displayed as the component name
+const set = figma.combineAsVariants([btnPrimary, btnGhost, btnOutline], figma.currentPage);
+set.name = "Button";   // displayed as the component name in Figma
 
-// 3. Auto Layout on the set for a tidy grid (optional but recommended):
+// 3. Auto Layout on the set for a tidy grid:
 set.layoutMode = "HORIZONTAL";
 set.itemSpacing = 24;
 set.paddingTop = set.paddingBottom = set.paddingLeft = set.paddingRight = 24;
@@ -148,6 +170,7 @@ set.primaryAxisSizingMode = "AUTO";
 set.counterAxisSizingMode = "AUTO";
 
 // DO NOT call figma.currentPage.appendChild after combineAsVariants.
+// CRITICAL: each variant component MUST have visually different fills/strokes/colours.
 \`\`\`
 
 ## Single frame (no variants)
@@ -172,4 +195,6 @@ figma.closePlugin();
 - Calling figma.currentPage.appendChild after figma.combineAsVariants.
 - Missing primaryAxisSizingMode or counterAxisSizingMode when layoutMode is set.
 - Using await outside the async IIFE.
+- Applying the same fills to ALL variant components — each variant MUST have different fills/strokes derived from the component's conditional logic (ternaries, cva, clsx, etc.).
+- Reusing the same child node object across multiple variant components — always create fresh nodes for each variant.
 `;

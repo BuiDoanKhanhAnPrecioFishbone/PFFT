@@ -66,6 +66,26 @@ export interface VariantProp {
   values: string[];
 }
 
+/**
+ * Per-combination visual style descriptor. Key is the Figma variant name string,
+ * e.g. "variant=primary, size=md". Used by Pass 2 to apply distinct fills/strokes
+ * per variant instead of copying a single base style.
+ */
+export interface VariantStyle {
+  /** Background fill hex (null = transparent / no fill) */
+  backgroundHex: string | null;
+  /** Text / label colour hex */
+  textHex: string;
+  /** Stroke colour hex (null = no border) */
+  borderHex: string | null;
+  /** Stroke weight in px (0 = no border) */
+  borderWeight: number;
+  /** Overall node opacity 0–1 */
+  opacity: number;
+  /** Optional padding overrides for size variants (px) */
+  padding?: { top: number; right: number; bottom: number; left: number };
+}
+
 export interface ComponentNode {
   type: 'frame' | 'text' | 'rectangle' | 'ellipse' | 'group';
   name: string;
@@ -111,6 +131,12 @@ export interface Pass1Result {
    * If present, Pass 2 generates a figma.combineAsVariants() ComponentSet.
    */
   variants?: VariantProp[];
+  /**
+   * Visual style per variant combination — keyed by Figma variant name string
+   * (e.g. "variant=primary, size=md"). Pass 2 reads this to apply distinct
+   * fills / strokes / text colours for every variant instead of copying base style.
+   */
+  variantStyles?: Record<string, VariantStyle>;
   tree: ComponentNode;
   ambiguities?: string[];
 }
@@ -178,6 +204,17 @@ Return ONLY valid JSON â€” no markdown, no explanation, no trailing text. T
       "values": [ string ]           // all detected values, e.g. ["primary", "ghost"]
     }
   ],
+  "variantStyles": {                 // visual style per combination — REQUIRED when variants present
+    "variant=primary, size=md": {    // key = Figma variant name (Prop1=val1, Prop2=val2)
+      "backgroundHex": "#2563EB",   // fill hex, null = transparent
+      "textHex": "#FFFFFF",          // label/text colour hex
+      "borderHex": null,             // stroke hex, null = no border
+      "borderWeight": 0,             // stroke width px
+      "opacity": 1,                  // 0-1
+      "padding": { "top": 8, "right": 16, "bottom": 8, "left": 16 } // optional size override
+    }
+    // ... one entry per combination
+  },
   "tree": {                          // recursive node tree
     "type": "frame" | "text" | "rectangle" | "ellipse" | "group",
     "name": string,
@@ -224,6 +261,14 @@ Return ONLY valid JSON â€” no markdown, no explanation, no trailing text. T
 - On each text node, set "textStyleName" to the matching typographyStyles[].styleName (or null).
 - For "tokens": if tailwindConfig is provided, extract its theme.colors, theme.spacing, theme.borderRadius, theme.fontFamily values (prefer actual token values over Tailwind defaults). If no tailwindConfig, extract implicit tokens from the component's inline values.
 - For "variants": scan the component for prop patterns like 'variant=', 'size=', 'color=', or TypeScript union types. If a prop has 2+ known values, add it to the variants array. Omit variants array entirely if no variants are detected.
+- For "variantStyles": REQUIRED whenever variants are present. Create one entry per combination. Derive visual values from the actual component source — look for conditional class names (e.g. variant === 'primary' ? 'bg-blue-600' : 'bg-transparent'), ternary fills, CVA/cva() maps, or inline style objects. Rules per field:
+  - backgroundHex: the resolved fill colour for this combination, or null if transparent/no background.
+  - textHex: the resolved text/label colour for this combination.
+  - borderHex: the resolved border/stroke colour, or null if no border.
+  - borderWeight: stroke width in px (convert Tailwind ring-2 = 2px, border = 1px, border-2 = 2px).
+  - opacity: overall node opacity (disabled state typically 0.5 or 0.4).
+  - padding: only include when size variant changes padding (e.g. size=sm vs size=lg).
+  DO NOT use the same backgroundHex for all combinations — each must reflect the actual conditional logic.
 - Do NOT invent fields not in the schema.
 - Flag anything ambiguous in the node's "flags" array AND in the top-level "ambiguities" array.`;
 }
@@ -243,9 +288,59 @@ export function buildPass2Prompt(pass1Json: Pass1Result): string {
     ? cappedVariants.reduce((a, v) => a * v.values.length, 1)
     : 0;
 
+  const variantStyles = pass1Json.variantStyles ?? {};
+
   const variantInstruction = hasVariants
-    ? `The component has ${cappedVariants.length} variant prop(s)  use figma.createComponent() + figma.combineAsVariants() as documented in the API reference:\n${cappedVariants.map((v) => `  - "${v.propName}": [${v.values.map((x) => `"${x}"`).join(', ')}]`).join('\n')}\nTotal combinations: ${variantCount}. Create one figma.createComponent() per combination, name each "Prop1=value1, Prop2=value2", adapt fills/padding/opacity per variant value.`
-    : `No variants  use figma.createFrame() for the root, then call figma.currentPage.appendChild(root).`;
+    ? `The component has ${cappedVariants.length} variant prop(s). Use figma.createComponent() + figma.combineAsVariants() as documented in the API reference.
+Variant props:
+${cappedVariants.map((v) => `  - "${v.propName}": [${v.values.map((x) => `"${x}"`).join(', ')}]`).join('\n')}
+Total combinations: ${variantCount}.
+
+IMPORTANT — each variant must look visually DIFFERENT. Use the "variantStyles" data from the JSON to drive fills, strokes, text colours, and padding for every combination.
+
+For each combination:
+  a) Create a figma.createComponent(), name it "Prop1=value1, Prop2=value2" (exact Figma variant key format).
+  b) Look up its "variantStyles" entry in the JSON by that exact key.
+  c) Apply the style fields from that entry:
+     - backgroundHex → component.fills (SOLID), or [] if null (transparent).
+     - borderHex + borderWeight → component.strokes and component.strokeWeight, or clear strokes if null.
+     - opacity → component.opacity.
+     - padding → paddingTop/Right/Bottom/Left if the entry has a padding object, else use the base tree padding.
+  d) For child text nodes: apply textHex as the text node's fills colour.
+  e) Build the full child tree (based on the "tree" field) inside every component — do NOT reuse node references across components.
+
+Example pattern (adapt to actual variant keys from the JSON):
+\`\`\`js
+const VARIANT_STYLES = ${JSON.stringify(variantStyles, null, 2)};
+
+function hexToRgb(hex) {
+  const h = hex.replace('#', '');
+  return { r: parseInt(h.slice(0,2),16)/255, g: parseInt(h.slice(2,4),16)/255, b: parseInt(h.slice(4,6),16)/255 };
+}
+
+function buildComponent(variantKey) {
+  const vs = VARIANT_STYLES[variantKey] ?? { backgroundHex: '#FFFFFF', textHex: '#000000', borderHex: null, borderWeight: 0, opacity: 1 };
+  const comp = figma.createComponent();
+  comp.name = variantKey;
+  // apply fill
+  comp.fills = vs.backgroundHex ? [{ type: 'SOLID', color: hexToRgb(vs.backgroundHex) }] : [];
+  // apply stroke
+  if (vs.borderHex && vs.borderWeight > 0) {
+    comp.strokes = [{ type: 'SOLID', color: hexToRgb(vs.borderHex) }];
+    comp.strokeWeight = vs.borderWeight;
+    comp.strokeAlign = 'INSIDE';
+  } else { comp.strokes = []; }
+  comp.opacity = vs.opacity ?? 1;
+  // padding: use per-variant override or fall back to base
+  const p = vs.padding ?? { top: /*basePaddingTop*/ 0, right: /*basePaddingRight*/ 0, bottom: /*basePaddingBottom*/ 0, left: /*basePaddingLeft*/ 0 };
+  comp.paddingTop = p.top; comp.paddingRight = p.right; comp.paddingBottom = p.bottom; comp.paddingLeft = p.left;
+  // ... build child nodes, apply vs.textHex to text nodes ...
+  return comp;
+}
+\`\`\`
+
+Generate the actual, complete code (not pseudo-code) using the above pattern with the real variant keys and real child tree nodes.`
+    : `No variants — use figma.createFrame() for the root, then call figma.currentPage.appendChild(root).`;
 
   const styleCount = (pass1Json.colorStyles?.length ?? 0) + (pass1Json.typographyStyles?.length ?? 0);
   const notifyMsg  = hasVariants
@@ -369,6 +464,9 @@ function parsePass1Response(raw: string): Pass1Result {
   if (!Array.isArray(result.typographyStyles)) result.typographyStyles = [];
   if (!Array.isArray(result.ambiguities))      result.ambiguities      = [];
   if (!Array.isArray(result.variants))         result.variants         = [];
+  if (typeof result.variantStyles !== 'object' || result.variantStyles === null) {
+    result.variantStyles = {};
+  }
 
   // Warn about non-Inter fonts (may not be installed in Figma).
   const nonInterFonts = result.fonts.filter(
@@ -396,6 +494,17 @@ function parsePass2Response(raw: string): string {
   if (!cleaned.includes('figma.') && !cleaned.includes('(async')) {
     throw new Error('Pass 2 response does not look like valid Figma plugin code');
   }
+
+  // Ensure code is wrapped in an async IIFE so that:
+  //   new Function("return <code>") always receives a single valid expression.
+  // Claude is instructed to produce (async () => { ... })() but sometimes
+  // produces bare statements (e.g. `async function main(){...}\nmain();`).
+  // Wrapping bare statements fixes the "unexpected token ')'" error that occurs
+  // when new Function tries to parse multiple statements as one expression.
+  if (!cleaned.trimStart().startsWith('(async')) {
+    return `(async () => {\n${cleaned}\n})();`;
+  }
+
   return cleaned;
 }
 

@@ -465,17 +465,22 @@ async function handlePlanStep(msg: RunPlanStepMessage): Promise<void> {
         }
 
         try {
-          // Strip figma.closePlugin() and its preceding notify so the plugin
-          // stays open for subsequent steps. Also strip figma.viewport.scrollAndZoomIntoView
-          // because zooming on every component is jarring in batch mode.
+          // Strip figma.closePlugin() so the plugin stays open for subsequent
+          // steps. Also strip viewport zooming — jarring in batch mode.
+          // NOTE: do NOT use a combined notify+closePlugin regex — if the notify
+          // message contains parentheses (e.g. "Button (primary) ✓") the [^)]*
+          // pattern breaks early and corrupts the remaining code.
           const safeCode = pluginCode
-            .replace(/figma\.notify\s*\([^)]*\)\s*;?\s*\n?\s*figma\.closePlugin\s*\(\s*\)\s*;?/g, '')
             .replace(/figma\.closePlugin\s*\(\s*\)\s*;?/g, '')
-            .replace(/figma\.viewport\.scrollAndZoomIntoView\s*\([^)]*\)\s*;?/g, '')
+            .replace(/figma\.viewport\.scrollAndZoomIntoView\s*\([\s\S]*?\)\s*;?/g, '')
             .trim();
 
-          const trimmed = safeCode;
-          const returnExpr = trimmed.startsWith('(') ? trimmed : `(${trimmed})`;
+          if (!safeCode) {
+            summaries.push({ componentName: pass1.componentName, ok: true, stylesCreated: result.stylesCreated, warnings: result.warnings });
+            continue;
+          }
+
+          const returnExpr = safeCode.startsWith('(') ? safeCode : `(${safeCode})`;
           // eslint-disable-next-line no-new-func
           await (new Function(`return ${returnExpr}`))();
 
